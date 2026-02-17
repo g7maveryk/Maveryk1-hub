@@ -23,27 +23,35 @@ local active = false
 local loopFlags = {}
 local eggsSelected = {}
 local bossEnabled = {}
-local cacheZones = {}
-local enemyMapping = {
-    Summer = { zone = "SummerEventZone", enabled = false },
-    Winter = { zone = "WinterEventZone", enabled = false }
-}
-local noclipConnection = nil
-local flyActive = false
-local flySpeed = 50
-local bodyVelocity = nil
-local jumpCount = 0
+local zoneCache = {}
+local activeBosses = {}
+local lastBossScan = 0
 local jumpConnection = nil
+local jumpCount = 0
+
+-- Lookup tables para acesso rápido
+local eggLookup = {}
+local bossZoneMap = {
+    Naga = "Zone2B1",
+    ["Lava Monster"] = "Zone5B1",
+    ["Tiki Monster"] = "Zone10B1",
+    ["The Frozen Ancient"] = "Zone12B1",
+    ["The Big 100M"] = "Zone12B3",
+    ["The Ethereal Everia"] = "Zone12B2",
+    ["Hornet Boss"] = "SummerEventZoneB1",
+    ["The Ice Serpent"] = "WinterEventZoneB1",
+    ["Great Sphinx"] = "ElementEventZoneB1",
+}
 
 local config = {
     farmAllEnemies = false,
-    farmEnemiesSpeed = 0.1,
+    farmEnemiesSpeed = 0.05,
     farmSummer = false,
     farmWinter = false,
     farmFood = false,
-    foodSpeed = 0.05,
+    foodSpeed = 0.03,
     farmBosses = false,
-    bossSpeed = 1.2,
+    bossAttackSpeed = 0.03,
     autoPlant = false,
     plantSpeed = 0.001,
     autoHatch = false,
@@ -56,9 +64,6 @@ local config = {
     sacrificeLoopWalrus = false,
     doubleJump = false,
     wallspeed = 16,
-    noclip = false,
-    fly = false,
-    flySpeed = 50,
 }
 
 local bossList = {
@@ -67,8 +72,6 @@ local bossList = {
     "Hornet Boss", "The Ice Serpent", "Great Sphinx"
 }
 for _, name in ipairs(bossList) do bossEnabled[name] = true end
-local bossCooldown = {}
-for _, name in ipairs(bossList) do bossCooldown[name] = 0 end
 
 local eggData = {
     { name = "Summer Egg", zone = "SummerEvent1" },
@@ -97,14 +100,34 @@ local eggData = {
     { name = "Tiki Boss Egg", zone = "Boss4" },
 }
 
-local function getZone(name)
-    return Workspace.Zones:FindFirstChild(name)
+-- Criar lookup table para eggs
+for _, egg in ipairs(eggData) do
+    eggLookup[egg.name] = egg.zone
 end
 
+-- Cache permanente de zonas
+local function getZone(name)
+    if not zoneCache[name] then
+        zoneCache[name] = Workspace.Zones:FindFirstChild(name)
+    end
+    return zoneCache[name]
+end
+
+-- Cache de pets com update a cada 0.5s
+local petCache = {}
+local lastPetUpdate = 0
 local function getPets()
-    if not LocalPlayer.Character then return {} end
-    local pets = LocalPlayer.Character:FindFirstChild("Pets")
-    return pets and pets:GetChildren() or {}
+    local now = tick()
+    if now - lastPetUpdate > 0.5 then
+        if LocalPlayer.Character then
+            local pets = LocalPlayer.Character:FindFirstChild("Pets")
+            petCache = pets and pets:GetChildren() or {}
+        else
+            petCache = {}
+        end
+        lastPetUpdate = now
+    end
+    return petCache
 end
 
 local function getPlayerPets()
@@ -183,63 +206,51 @@ local function foodLoop()
     end
 end
 
+local function scanBosses()
+    if not active or not config.farmBosses then return end
+    local newActive = {}
+    
+    for _, name in ipairs(bossList) do
+        if bossEnabled[name] then
+            local zone = getZone(bossZoneMap[name])
+            local enemy = zone and zone:FindFirstChild("Enemies") and zone.Enemies:FindFirstChild(name)
+            if enemy then
+                table.insert(newActive, enemy)
+            end
+        end
+    end
+    activeBosses = newActive
+end
+
 local function bossLoop()
     while loopFlags.boss and active and config.farmBosses do
         local pets = getPets()
-        if #pets > 0 then
-            local now = os.clock()
+        if #pets > 0 and #activeBosses > 0 then
             local idx = 1
-            local attackCount = 0
-            
-            for _, name in ipairs(bossList) do
+            for _, boss in ipairs(activeBosses) do
                 if not active or not loopFlags.boss then break end
-                
-                if bossEnabled[name] and now - (bossCooldown[name] or 0) >= config.bossSpeed then
-                    attackCount = attackCount + 1
-                    if attackCount > 2 then
-                        task.wait(0.2)
-                        attackCount = 0
-                    end
-                    
-                    local zoneMap = {
-                        Naga = "Zone2B1",
-                        ["Lava Monster"] = "Zone5B1",
-                        ["Tiki Monster"] = "Zone10B1",
-                        ["The Frozen Ancient"] = "Zone12B1",
-                        ["The Big 100M"] = "Zone12B3",
-                        ["The Ethereal Everia"] = "Zone12B2",
-                        ["Hornet Boss"] = "SummerEventZoneB1",
-                        ["The Ice Serpent"] = "WinterEventZoneB1",
-                        ["Great Sphinx"] = "ElementEventZoneB1",
-                    }
-                    
-                    local zoneName = zoneMap[name]
-                    if not cacheZones[zoneName] then
-                        cacheZones[zoneName] = getZone(zoneName)
-                    end
-                    local zone = cacheZones[zoneName]
-                    
-                    local enemy = zone and zone:FindFirstChild("Enemies") and zone.Enemies:FindFirstChild(name)
-                    
-                    if enemy then
-                        pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", enemy, pets[idx])
-                        idx = idx % #pets + 1
-                        bossCooldown[name] = now
-                        task.wait(0.1)
-                    end
+                if boss and boss.Parent then
+                    pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", boss, pets[idx])
+                    idx = idx % #pets + 1
+                    task.wait(config.bossAttackSpeed)
                 end
             end
         end
-        task.wait(0.5)
+        task.wait(0.1)
     end
 end
 
-task.spawn(function()
-    while true do
-        task.wait(120)
-        cacheZones = {}
-    end
-end)
+-- Thread de scan a cada 15 segundos (só cria se necessário)
+if config.farmBosses then
+    task.spawn(function()
+        while true do
+            if active and config.farmBosses then
+                scanBosses()
+            end
+            task.wait(15)
+        end
+    end)
+end
 
 local function plantLoop()
     while loopFlags.plant and active and config.autoPlant do
@@ -299,7 +310,10 @@ local function startAllLoops()
     loopFlags = { enemies = true, food = true, boss = true, plant = true, hatch = true, nests = true, sacrifice = true }
     if config.farmAllEnemies or config.farmSummer or config.farmWinter then task.spawn(enemyLoop) end
     if config.farmFood then task.spawn(foodLoop) end
-    if config.farmBosses then task.spawn(bossLoop) end
+    if config.farmBosses then 
+        task.spawn(bossLoop)
+        scanBosses()
+    end
     if config.autoPlant then task.spawn(plantLoop) end
     if config.autoHatch then task.spawn(hatchLoop) end
     if config.autoNests then task.spawn(nestsLoop) end
@@ -308,6 +322,7 @@ end
 
 local function stopAllLoops()
     loopFlags = {}
+    activeBosses = {}
 end
 
 local function start()
@@ -332,8 +347,7 @@ local win = Rayfield:CreateWindow({
 local mainTab = win:CreateTab("Main")
 mainTab:CreateSection("Credits")
 mainTab:CreateLabel("developed by Maveryk1t")
-mainTab:CreateLabel("the best script for Pet Swarm Simulator")
-mainTab:CreateLabel("yt: Maveryk1t")
+mainTab:CreateLabel("youtube: Maveryk1t")
 mainTab:CreateLabel("discord: knzd1")
 
 mainTab:CreateSection("Control")
@@ -363,7 +377,7 @@ task.spawn(function()
             nestStatus:Set("Nests: " .. (config.autoNests and "ON" or "OFF"))
             local sacOn = config.sacrificeLoopQueen or config.sacrificeLoopKing or config.sacrificeLoopFrozen or config.sacrificeLoopWalrus
             sacrificeStatus:Set("Sacrifice: " .. (sacOn and "ON" or "OFF"))
-            local miscOn = config.doubleJump or config.noclip or config.fly
+            local miscOn = config.doubleJump
             miscStatus:Set("Misc: " .. (miscOn and "ON" or "OFF"))
         else
             statusLabel:Set("Status: Stopped")
@@ -405,7 +419,8 @@ bossTab:CreateToggle({ Name = "Enable Boss Farming", CurrentValue = config.farmB
 bossTab:CreateToggle({ Name = "Enable All Bosses", CurrentValue = true, Callback = function(v)
     for _, name in ipairs(bossList) do bossEnabled[name] = v end
 end })
-bossTab:CreateSlider({ Name = "Speed between Bosses (s)", Range = {0.5, 3}, Increment = 0.1, Suffix = "s", CurrentValue = config.bossSpeed, Callback = function(v) config.bossSpeed = v end })
+bossTab:CreateSlider({ Name = "Attack Speed (s)", Range = {0.01, 0.3}, Increment = 0.01, Suffix = "s", CurrentValue = config.bossAttackSpeed, Callback = function(v) config.bossAttackSpeed = v end })
+bossTab:CreateLabel("Boss scan every 15 seconds")
 
 bossTab:CreateSection("Boss List")
 for _, name in ipairs(bossList) do
@@ -491,25 +506,24 @@ miscTab:CreateToggle({ Name = "Infinite Double Jump", CurrentValue = config.doub
         if humanoid then
             humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
             jumpCount = 0
-            if jumpConnection then jumpConnection:Disconnect() end
-            jumpConnection = humanoid.Jumping:Connect(function()
-                jumpCount = jumpCount + 1
-                if jumpCount >= 2 then
-                    humanoid.Jump = true
-                    jumpCount = 0
-                end
-            end)
+            if not jumpConnection then
+                jumpConnection = humanoid.Jumping:Connect(function()
+                    jumpCount = jumpCount + 1
+                    if jumpCount >= 2 then
+                        humanoid.Jump = true
+                        jumpCount = 0
+                    end
+                end)
+            end
         end
-    else
-        if jumpConnection then
-            jumpConnection:Disconnect()
-            jumpConnection = nil
-        end
+    elseif jumpConnection then
+        jumpConnection:Disconnect()
+        jumpConnection = nil
         jumpCount = 0
     end
 end })
 
-miscTab:CreateSlider({ Name = "Wall Speed", Range = {16, 100}, Increment = 1, Suffix = "", CurrentValue = config.wallspeed, Callback = function(v)
+miscTab:CreateSlider({ Name = "Walk Speed", Range = {16, 100}, Increment = 1, Suffix = "", CurrentValue = config.wallspeed, Callback = function(v)
     config.wallspeed = v
     local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
     if humanoid then
@@ -517,67 +531,8 @@ miscTab:CreateSlider({ Name = "Wall Speed", Range = {16, 100}, Increment = 1, Su
     end
 end })
 
-miscTab:CreateToggle({ Name = "Noclip", CurrentValue = config.noclip, Callback = function(v)
-    config.noclip = v
-    if v then
-        noclipConnection = RunService.Stepped:Connect(function()
-            if LocalPlayer.Character then
-                for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = false
-                    end
-                end
-            end
-        end)
-    else
-        if noclipConnection then
-            noclipConnection:Disconnect()
-            noclipConnection = nil
-        end
-    end
-end })
-
-miscTab:CreateToggle({ Name = "Fly", CurrentValue = config.fly, Callback = function(v)
-    config.fly = v
-    if v then
-        local char = LocalPlayer.Character
-        if not char then return end
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        bodyVelocity = Instance.new("BodyVelocity")
-        bodyVelocity.MaxForce = Vector3.new(1,1,1)*math.huge
-        bodyVelocity.Velocity = Vector3.new(0,0,0)
-        bodyVelocity.Parent = root
-        local flyLoop
-        flyLoop = RunService.RenderStepped:Connect(function()
-            if not config.fly or not root or not bodyVelocity then
-                if flyLoop then flyLoop:Disconnect() end
-                return
-            end
-            local direction = Vector3.new(0,0,0)
-            if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction = direction + (workspace.CurrentCamera.CFrame.LookVector * config.flySpeed) end
-            if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction = direction - (workspace.CurrentCamera.CFrame.LookVector * config.flySpeed) end
-            if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction = direction - (workspace.CurrentCamera.CFrame.RightVector * config.flySpeed) end
-            if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction = direction + (workspace.CurrentCamera.CFrame.RightVector * config.flySpeed) end
-            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction = direction + Vector3.new(0, config.flySpeed, 0) end
-            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction = direction - Vector3.new(0, config.flySpeed, 0) end
-            bodyVelocity.Velocity = direction
-        end)
-        miscTab.FlyConn = flyLoop
-    else
-        if bodyVelocity then
-            bodyVelocity:Destroy()
-            bodyVelocity = nil
-        end
-        if miscTab.FlyConn then
-            miscTab.FlyConn:Disconnect()
-            miscTab.FlyConn = nil
-        end
-    end
-end })
-
-miscTab:CreateSlider({ Name = "Fly Speed", Range = {10, 200}, Increment = 1, Suffix = "", CurrentValue = config.flySpeed, Callback = function(v) config.flySpeed = v end })
+miscTab:CreateSection("Hotkey")
+miscTab:CreateLabel("Press H to hide/show GUI")
 
 local guiVisible = true
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -590,3 +545,4 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         end
     end
 end)
+
