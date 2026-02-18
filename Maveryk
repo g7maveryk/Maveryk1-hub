@@ -1,9 +1,3 @@
---[[
-    Maveryk Hub - Pet Swarm Simulator
-    Ultra Otimizado - Versão Definitiva
-    Desenvolvido por Maveryk1t
-]]
-
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Players = game:GetService("Players")
