@@ -1,4 +1,61 @@
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+--[[
+    Maveryk Hub - Pet Swarm Simulator
+    Ultra Otimizado - Versão Estável
+    Desenvolvido por Maveryk1t
+]]
+
+-- Verificação segura da Rayfield
+local Rayfield
+local loadSuccess, loadResult = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+
+if loadSuccess and loadResult then
+    Rayfield = loadResult
+else
+    -- Fallback: notificação no chat
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Maveryk Hub",
+        Text = "Failed to load Rayfield. Using fallback mode.",
+        Duration = 5
+    })
+    -- Criar interface simples alternativa
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Parent = game.CoreGui
+    
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(0, 300, 0, 200)
+    Frame.Position = UDim2.new(0.5, -150, 0.5, -100)
+    Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    Frame.Parent = ScreenGui
+    
+    local TextLabel = Instance.new("TextLabel")
+    TextLabel.Size = UDim2.new(1, 0, 0, 50)
+    TextLabel.Position = UDim2.new(0, 0, 0, 0)
+    TextLabel.Text = "Maveryk Hub - Fallback Mode"
+    TextLabel.TextColor3 = Color3.new(1, 1, 1)
+    TextLabel.BackgroundTransparency = 1
+    TextLabel.Parent = Frame
+    
+    Rayfield = {
+        CreateWindow = function() 
+            return {
+                CreateTab = function() 
+                    return {
+                        CreateSection = function() end,
+                        CreateButton = function() end,
+                        CreateToggle = function() end,
+                        CreateSlider = function() end,
+                        CreateLabel = function() 
+                            return { Set = function() end }
+                        end,
+                        CreateDropdown = function() end
+                    }
+                end
+            }
+        end
+    }
+end
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7,16 +64,54 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
-local Remotes = ReplicatedStorage.Remotes
-local Functions = Remotes.Functions
-local Events = Remotes.Events
+-- Verificação segura dos remotes
+local Remotes = ReplicatedStorage and ReplicatedStorage:FindFirstChild("Remotes")
+local Functions = Remotes and Remotes:FindFirstChild("Functions")
+local Events = Remotes and Remotes:FindFirstChild("Events")
 
-local CombatRemote = Functions.CombatRF
-local CollectionRemote = Functions.CollectionRF
-local HatchRemote = Events.HatchEggEvent
-local PlantRemote = Events.PlantEggEvent
-local FeedRemote = Events.FeedEggEvent
-local SacrificeRemote = Functions.SacrificeFunction
+local CombatRemote = Functions and Functions:FindFirstChild("CombatRF")
+local CollectionRemote = Functions and Functions:FindFirstChild("CollectionRF")
+local HatchRemote = Events and Events:FindFirstChild("HatchEggEvent")
+local PlantRemote = Events and Events:FindFirstChild("PlantEggEvent")
+local FeedRemote = Events and Events:FindFirstChild("FeedEggEvent")
+local SacrificeRemote = Functions and Functions:FindFirstChild("SacrificeFunction")
+
+-- Funções seguras para chamar remotes
+local function safeCombat(...)
+    if CombatRemote then
+        pcall(CombatRemote.InvokeServer, CombatRemote, ...)
+    end
+end
+
+local function safeCollect(...)
+    if CollectionRemote then
+        pcall(CollectionRemote.InvokeServer, CollectionRemote, ...)
+    end
+end
+
+local function safeHatch()
+    if HatchRemote then
+        pcall(HatchRemote.FireServer, HatchRemote)
+    end
+end
+
+local function safePlant(zone)
+    if PlantRemote then
+        pcall(PlantRemote.FireServer, PlantRemote, zone)
+    end
+end
+
+local function safeFeed(nest)
+    if FeedRemote then
+        pcall(FeedRemote.FireServer, FeedRemote, nest)
+    end
+end
+
+local function safeSacrifice(pet)
+    if SacrificeRemote then
+        pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", pet)
+    end
+end
 
 -- Estado global
 local active = false
@@ -90,20 +185,13 @@ local zoneList = {
     "SummerEventZoneB1", "WinterEventZoneB1", "ElementEventZoneB1"
 }
 for _, z in ipairs(zoneList) do
-    zoneCache[z] = Workspace.Zones:FindFirstChild(z)
-end
-
--- Limpeza de cache a cada 5 minutos
-task.spawn(function()
-    while true do
-        task.wait(300)
-        for k, v in pairs(zoneCache) do
-            if not v or not v.Parent then
-                zoneCache[k] = nil
-            end
-        end
+    local success, result = pcall(function()
+        return Workspace.Zones:FindFirstChild(z)
+    end)
+    if success and result then
+        zoneCache[z] = result
     end
-end)
+end
 
 -- Lista de ovos
 local eggData = {
@@ -152,15 +240,19 @@ local function getPets()
 end
 
 -- Atualizar cache de pets quando mudar
-LocalPlayer.CharacterAdded:Connect(function()
-    petCacheValid = false
-end)
+if LocalPlayer.CharacterAdded then
+    LocalPlayer.CharacterAdded:Connect(function()
+        petCacheValid = false
+    end)
+end
 
 if LocalPlayer.Character then
-    LocalPlayer.Character.ChildAdded:Connect(function(child)
-        if child.Name == "Pets" then
-            petCacheValid = false
-        end
+    local success, result = pcall(function()
+        return LocalPlayer.Character.ChildAdded:Connect(function(child)
+            if child.Name == "Pets" then
+                petCacheValid = false
+            end
+        end)
     end)
 end
 
@@ -196,7 +288,7 @@ local function tickEnemies()
             local z = getZone(zone)
             if z and z:FindFirstChild("Enemies") then
                 for _, e in ipairs(z.Enemies:GetChildren()) do
-                    pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", e, pets[idx])
+                    safeCombat("AttackEnemy", e, pets[idx])
                     idx = idx % #pets + 1
                 end
             end
@@ -206,7 +298,7 @@ local function tickEnemies()
             local z = getZone("SummerEventZone")
             if z and z:FindFirstChild("Enemies") then
                 for _, e in ipairs(z.Enemies:GetChildren()) do
-                    pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", e, pets[idx])
+                    safeCombat("AttackEnemy", e, pets[idx])
                     idx = idx % #pets + 1
                 end
             end
@@ -215,7 +307,7 @@ local function tickEnemies()
             local z = getZone("WinterEventZone")
             if z and z:FindFirstChild("Enemies") then
                 for _, e in ipairs(z.Enemies:GetChildren()) do
-                    pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", e, pets[idx])
+                    safeCombat("AttackEnemy", e, pets[idx])
                     idx = idx % #pets + 1
                 end
             end
@@ -235,7 +327,7 @@ local function tickFood()
         if #foods > 0 then
             local idx = 1
             for _, f in ipairs(foods) do
-                pcall(CollectionRemote.InvokeServer, CollectionRemote, "CollectFood", f, pets[idx])
+                safeCollect("CollectFood", f, pets[idx])
                 idx = idx % #pets + 1
             end
         end
@@ -262,7 +354,84 @@ local function tickBosses()
     if not config.farmBosses then return end
     
     local pets = getPets()
-    if #pets == 0 or #activeBosses == 
+    if #pets == 0 or #activeBosses == 0 then return end
+    
+    local idx = 1
+    for _, boss in ipairs(activeBosses) do
+        if boss and boss.Parent and canAttackBoss(boss.Name) then
+            safeCombat("AttackEnemy", boss, pets[idx])
+            idx = idx % #pets + 1
+        end
+    end
+end
+
+local function tickSacrifice()
+    if not (config.sacrificeLoopQueen or config.sacrificeLoopKing or 
+            config.sacrificeLoopFrozen or config.sacrificeLoopWalrus) then return end
+    
+    if config.sacrificeLoopQueen then
+        safeSacrifice("Queen Bee")
+    end
+    if config.sacrificeLoopKing then
+        safeSacrifice("King Bee")
+    end
+    if config.sacrificeLoopFrozen then
+        safeSacrifice("Frozen Werewolf")
+    end
+    if config.sacrificeLoopWalrus then
+        safeSacrifice("Walrus")
+    end
+end
+
+-- ===== EGGS ULTRA RÁPIDOS =====
+
+local function tickPlant()
+    if not config.autoPlant or #eggsSelected == 0 then return end
+    
+    for _, zone in ipairs(eggsSelected) do
+        for _ = 1, 9 do
+            safePlant(zone)
+        end
+    end
+end
+
+local function tickHatch()
+    if not config.autoHatch then return end
+    safeHatch()
+end
+
+local function tickNests()
+    if not config.autoNests then return end
+    
+    local nests = getNests()
+    if nests then
+        for _, nest in ipairs(nests:GetChildren()) do
+            safeFeed(nest)
+        end
+    end
+end
+
+-- ===== LOOP PRINCIPAL ÚNICO =====
+
+local function mainLoop()
+    while active do
+        tickBosses()
+        tickEnemies()
+        tickFood()
+        tickSacrifice()
+        tickPlant()
+        tickHatch()
+        tickNests()
+        task.wait(0.03)
+    end
+end
+
+local function bossScanLoop()
+    while active do
+        scanBosses()
+        task.wait(15)
+    end
+end
 
 -- ===== CONTROLE DE TAREFAS =====
 
@@ -304,14 +473,31 @@ local function stop()
     stopAllLoops()
 end
 
--- Interface Rayfield
-local win = Rayfield:CreateWindow({
-    Name = "Maveryk Hub - Pet Swarm Simulator",
-    LoadingTitle = "Loading...",
-    LoadingSubtitle = "Ultra Otimizado",
-    ConfigurationSaving = { Enabled = true, FolderName = "MaverykHub", FileName = "Config" },
-    Theme = "Dark"
-})
+-- Interface Rayfield (com verificação)
+local win
+if Rayfield and Rayfield.CreateWindow then
+    win = Rayfield:CreateWindow({
+        Name = "Maveryk Hub - Pet Swarm Simulator",
+        LoadingTitle = "Loading...",
+        LoadingSubtitle = "Ultra Otimizado",
+        ConfigurationSaving = { Enabled = true, FolderName = "MaverykHub", FileName = "Config" },
+        Theme = "Dark"
+    })
+else
+    -- Fallback: não criar janela
+    win = {
+        CreateTab = function() 
+            return {
+                CreateSection = function() end,
+                CreateButton = function() end,
+                CreateToggle = function() end,
+                CreateSlider = function() end,
+                CreateLabel = function() return { Set = function() end } end,
+                CreateDropdown = function() end
+            }
+        end
+    }
+end
 
 -- Aba Main
 local mainTab = win:CreateTab("Main")
@@ -359,6 +545,7 @@ end)
 
 mainTab:CreateSection("Credits")
 mainTab:CreateLabel("developed by Maveryk1t")
+mainTab:CreateLabel("the best script for Pet Swarm Simulator")
 mainTab:CreateLabel("yt: Maveryk1t")
 mainTab:CreateLabel("discord: knzd1")
 
@@ -444,7 +631,7 @@ end
 eggTab:CreateButton({
     Name = "Remove Hatch Animation",
     Callback = function()
-        local ev = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Events")
+        local ev = ReplicatedStorage and ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Events")
         if ev and ev:FindFirstChild("HatchAnimationEvent") then
             ev.HatchAnimationEvent:Destroy()
         end
@@ -455,15 +642,15 @@ eggTab:CreateButton({
 local sacrificeTab = win:CreateTab("Sacrifices")
 sacrificeTab:CreateSection("Mythical")
 sacrificeTab:CreateToggle({ Name = "Queen Bee (Mythical) - Loop", CurrentValue = config.sacrificeLoopQueen, Callback = function(v) config.sacrificeLoopQueen = v end })
-sacrificeTab:CreateButton({ Name = "Sacrifice Queen Bee (Once)", Callback = function() pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Queen Bee") end })
+sacrificeTab:CreateButton({ Name = "Sacrifice Queen Bee (Once)", Callback = function() safeSacrifice("Queen Bee") end })
 sacrificeTab:CreateToggle({ Name = "Frozen Werewolf (Mythical) - Loop", CurrentValue = config.sacrificeLoopFrozen, Callback = function(v) config.sacrificeLoopFrozen = v end })
-sacrificeTab:CreateButton({ Name = "Sacrifice Frozen Werewolf (Once)", Callback = function() pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Frozen Werewolf") end })
+sacrificeTab:CreateButton({ Name = "Sacrifice Frozen Werewolf (Once)", Callback = function() safeSacrifice("Frozen Werewolf") end })
 
 sacrificeTab:CreateSection("Legendary")
 sacrificeTab:CreateToggle({ Name = "King Bee (Legendary) - Loop", CurrentValue = config.sacrificeLoopKing, Callback = function(v) config.sacrificeLoopKing = v end })
-sacrificeTab:CreateButton({ Name = "Sacrifice King Bee (Once)", Callback = function() pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "King Bee") end })
+sacrificeTab:CreateButton({ Name = "Sacrifice King Bee (Once)", Callback = function() safeSacrifice("King Bee") end })
 sacrificeTab:CreateToggle({ Name = "Walrus (Legendary) - Loop", CurrentValue = config.sacrificeLoopWalrus, Callback = function(v) config.sacrificeLoopWalrus = v end })
-sacrificeTab:CreateButton({ Name = "Sacrifice Walrus (Once)", Callback = function() pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Walrus") end })
+sacrificeTab:CreateButton({ Name = "Sacrifice Walrus (Once)", Callback = function() safeSacrifice("Walrus") end })
 
 -- Aba Misc
 local miscTab = win:CreateTab("Misc")
@@ -515,3 +702,10 @@ UserInputService.InputBegan:Connect(function(input, gp)
         end
     end
 end)
+
+-- Notificação de sucesso
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "Maveryk Hub",
+    Text = "Script loaded successfully!",
+    Duration = 3
+})
